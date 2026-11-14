@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="用 Minecraft 的生物、物品與玩家資料闖 30 關，在瀏覽器裡直接寫 SQL。">
+<title>礦工 SQL 學院</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=LXGW+WenKai+TC:wght@700&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<style>
+/* layout: a strip of 30 level blocks across the top (6 chapters = 6 pickaxe tiers); below it, lesson on the left, workbench (editor + results) on the right; table reference underneath */
+:root {
+  --ground: #E7EDE8;
+  --surface: #FBFCFA;
+  --ink: #17231E;
+  --muted: #55665D;
+  --line: #C9D4CC;
+  --accent: #0B7A53;
+  --on-accent: #FFFFFF;
+  --accent-soft: #D4EDE0;
+  --gold: #8F6100;
+  --gold-soft: #F5E8C4;
+  --bad: #B3261E;
+  --bad-soft: #F9E0DC;
+  --code-bg: #13201B;
+  --code-ink: #DCEBE3;
+  --code-line: #2C4037;
+  --font-display: "LXGW WenKai TC", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Noto Sans TC", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0D1411; --surface: #17211C; --ink: #E4EDE7; --muted: #94A69C; --line: #2B3B33;
+    --accent: #4FD39A; --on-accent: #05241A; --accent-soft: #14382A;
+    --gold: #E3B341; --gold-soft: #3A2F10; --bad: #FF8A80; --bad-soft: #47201C;
+    --code-bg: #090F0C; --code-ink: #DCEBE3; --code-line: #26372F;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0D1411; --surface: #17211C; --ink: #E4EDE7; --muted: #94A69C; --line: #2B3B33;
+  --accent: #4FD39A; --on-accent: #05241A; --accent-soft: #14382A;
+  --gold: #E3B341; --gold-soft: #3A2F10; --bad: #FF8A80; --bad-soft: #47201C;
+  --code-bg: #090F0C; --code-ink: #DCEBE3; --code-line: #26372F;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.75; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 24px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 22px; }
+p, h1, h2, h3, ul, pre { margin: 0; }
+a { color: var(--accent); }
+code { font-family: var(--font-mono); font-size: 0.9em; background: var(--accent-soft); padding: 1px 5px; border-radius: 3px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button { font: inherit; cursor: pointer; }
+
+.head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 10px 24px; }
+.brand { font-family: var(--font-display); font-size: 30px; line-height: 1.2; }
+.brand small { display: block; font-family: var(--font-body); font-size: 14px; font-weight: 400; color: var(--muted); margin-top: 4px; }
+.prog { display: flex; align-items: center; gap: 12px; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bar { width: 150px; height: 8px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+
+.map { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: end; }
+.chap { display: flex; flex-direction: column; gap: 6px; }
+.chap span { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.chap div { display: flex; gap: 5px; }
+.lv { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 3px; background: var(--ground); color: var(--muted); font-family: var(--font-mono); font-size: 13px; padding: 0; }
+.lv:hover { border-color: var(--accent); color: var(--ink); }
+.lv.done { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.lv.cur { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--gold); color: var(--ink); }
+.lv.done.cur { color: var(--on-accent); }
+.free { margin-left: auto; height: 34px; padding: 0 14px; border: 1px dashed var(--muted); border-radius: 3px; background: transparent; color: var(--ink); font-size: 14px; }
+.free.cur { border-style: solid; border-color: var(--gold); background: var(--gold-soft); }
+
+.stage { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 22px; align-items: start; }
+.lesson, .bench { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.eyebrow { font-size: 13px; color: var(--gold); font-weight: 700; letter-spacing: 0.04em; }
+.lesson h1 { font-family: var(--font-display); font-size: 28px; line-height: 1.3; text-wrap: balance; }
+.story { color: var(--muted); font-size: 15px; }
+.teach { display: flex; flex-direction: column; gap: 10px; font-size: 15px; }
+.teach pre, .answer pre { font-family: var(--font-mono); font-size: 13.5px; line-height: 1.6; background: var(--code-bg); color: var(--code-ink); border-radius: 5px; padding: 12px 14px; overflow-x: auto; }
+.kw { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; }
+.kw li { font-size: 13px; border: 1px solid var(--line); border-radius: 3px; padding: 2px 8px; background: var(--surface); }
+.kw b { font-family: var(--font-mono); font-weight: 600; color: var(--accent); margin-right: 6px; }
+.task { background: var(--gold-soft); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.task h2 { font-size: 13px; color: var(--gold); letter-spacing: 0.04em; }
+.task p { font-size: 15.5px; }
+.task code { background: var(--surface); }
+.uses { font-size: 13px; color: var(--muted); }
+.uses button { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; font-family: var(--font-mono); font-size: 13px; }
+
+.editor { background: var(--code-bg); border-radius: 6px; overflow: hidden; display: flex; flex-direction: column; }
+.editor label { font-size: 12px; color: var(--code-ink); opacity: 0.7; padding: 8px 14px 0; font-family: var(--font-mono); }
+#sql { width: 100%; min-height: 150px; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--code-ink); font-family: var(--font-mono); font-size: 15px; line-height: 1.65; padding: 8px 14px 12px; tab-size: 2; }
+.tools { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--code-line); align-items: center; }
+.btn { border: 1px solid var(--code-line); background: transparent; color: var(--code-ink); border-radius: 4px; padding: 6px 13px; font-size: 14px; }
+.btn:hover { border-color: var(--code-ink); }
+.btn.go { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 700; padding: 6px 20px; }
+.btn.go:hover { filter: brightness(1.1); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.keytip { margin-left: auto; font-size: 12px; color: var(--code-ink); opacity: 0.6; font-family: var(--font-mono); }
+
+.verdict { border-radius: 6px; padding: 12px 16px; font-size: 15px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.verdict.ok { background: var(--accent-soft); color: var(--ink); border-left: 5px solid var(--accent); }
+.verdict.no { background: var(--bad-soft); color: var(--ink); border-left: 5px solid var(--bad); }
+.verdict.info { background: var(--surface); border: 1px solid var(--line); color: var(--muted); }
+.verdict b { font-weight: 700; }
+.verdict .mono { font-family: var(--font-mono); font-size: 13px; display: block; color: var(--muted); overflow-wrap: anywhere; }
+.next { border: 0; background: var(--accent); color: var(--on-accent); border-radius: 4px; padding: 7px 16px; font-weight: 700; font-size: 14px; }
+.note { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 16px; font-size: 15px; display: flex; flex-direction: column; gap: 8px; }
+.note h3 { font-size: 13px; color: var(--muted); letter-spacing: 0.04em; }
+
+.results { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.res { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.res h3 { font-size: 13px; color: var(--muted); font-weight: 500; display: flex; justify-content: space-between; gap: 8px; }
+.scroll { overflow: auto; max-height: 340px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { position: sticky; top: 0; background: var(--ground); font-family: var(--font-mono); font-weight: 600; font-size: 12.5px; }
+tr:last-child td { border-bottom: 0; }
+td.null { color: var(--muted); font-family: var(--font-mono); font-size: 12px; }
+.empty { padding: 14px; font-size: 14px; color: var(--muted); }
+
+.ref { display: flex; flex-direction: column; gap: 12px; }
+.ref h2 { font-family: var(--font-display); font-size: 22px; }
+.ref > p { font-size: 14px; color: var(--muted); }
+.tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+.tbl { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; min-width: 0; }
+.tbl.used { border-color: var(--gold); }
+.tbl summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.tbl summary b { font-family: var(--font-mono); font-size: 15px; }
+.tbl summary span { font-size: 13px; color: var(--muted); }
+.cols { list-style: none; padding: 0; margin-top: 8px; display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13.5px; }
+.cols b { font-family: var(--font-mono); font-weight: 600; color: var(--accent); }
+.cols span { color: var(--muted); }
+.tbl .scroll { margin-top: 10px; max-height: 260px; }
+
+.foot { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; justify-content: space-between; }
+.foot button { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 4px; padding: 5px 12px; font-size: 13px; }
+@media (max-width: 860px) {
+  .stage { grid-template-columns: minmax(0, 1fr); }
+  .brand { font-size: 26px; }
+  .lesson h1 { font-size: 24px; }
+  .free { margin-left: 0; }
+  .keytip { display: none; }
+}
+</style>
+</head>
+<body>
+
+<main class="wrap">
+  <header class="head">
+    <p class="brand">礦工 SQL 學院<small>用 Minecraft 的生物、物品和玩家資料，一關一關學會 SQL 查詢</small></p>
+    <div class="prog">
+      <span id="progText">已過 0 / 30 關</span>
+      <div class="bar" id="progBar" role="progressbar" aria-label="過關進度" aria-valuemin="0" aria-valuemax="30" aria-valuenow="0"><i></i></div>
+    </div>
+  </header>
+
+  <nav class="map" id="map" aria-label="關卡地圖"></nav>
+
+  <div class="stage">
+    <section class="lesson" id="lesson" aria-live="polite"></section>
+    <section class="bench" aria-label="工作台">
+      <div class="editor">
+        <label for="sql">在這裡寫 SQL</label>
+        <textarea id="sql" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></textarea>
+        <div class="tools">
+          <button type="button" class="btn go" id="runBtn" disabled>載入中…</button>
+          <button type="button" class="btn" id="hintBtn">提示</button>
+          <button type="button" class="btn" id="ansBtn">看答案</button>
+          <button type="button" class="btn" id="clearBtn">重寫</button>
+          <span class="keytip">Ctrl / ⌘ + Enter 執行</span>
+        </div>
+      </div>
+      <div id="verdict" class="verdict info" role="status">寫好 SQL 後按「執行」，系統會把你的結果和預期結果比對。</div>
+      <div id="extra"></div>
+      <div class="results" id="results"></div>
+    </section>
+  </div>
+
+  <section class="ref" aria-labelledby="refTitle">
+    <h2 id="refTitle">資料表圖鑑</h2>
+    <p>伺服器上有 7 張資料表。點開可以看欄位說明和全部資料。金色外框是這一關會用到的表。</p>
+    <div class="tables" id="tables"></div>
+  </section>
+
+  <footer class="foot">
+    <span>非官方學習網站，與 Mojang、Microsoft 無關。闖關設計參考「SQL 之母」。玩家與挖礦紀錄是虛構的練習資料。進度存在這台裝置的瀏覽器裡。</span>
+    <button type="button" id="resetBtn">清除全部進度</button>
+  </footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-asm.js"></script>
+<script>
+var SEED = [
+"CREATE TABLE biomes (id INTEGER PRIMARY KEY, name TEXT, dimension TEXT, temperature REAL);",
+"INSERT INTO biomes VALUES (1,'平原','主世界',0.8),(2,'森林','主世界',0.7),(3,'沙漠','主世界',2.0),(4,'針葉林','主世界',0.25),(5,'叢林','主世界',0.95),(6,'雪原','主世界',0.0),(7,'沼澤','主世界',0.8),(8,'地獄荒原','地獄',2.0),(9,'緋紅森林','地獄',2.0),(10,'終界','終界',0.5),(11,'蘑菇島','主世界',0.9);",
+"CREATE TABLE mobs (id INTEGER PRIMARY KEY, name TEXT, type TEXT, health INTEGER, damage INTEGER, dimension TEXT, xp INTEGER);",
+"INSERT INTO mobs VALUES (1,'殭屍','敵對',20,3,'主世界',5),(2,'骷髏','敵對',20,3,'主世界',5),(3,'苦力怕','敵對',20,49,'主世界',5),(4,'蜘蛛','中立',16,2,'主世界',5),(5,'終界使者','中立',40,7,'終界',5),(6,'女巫','敵對',26,6,'主世界',5),(7,'烈焰使者','敵對',20,6,'地獄',10),(8,'地獄幽靈','敵對',10,17,'地獄',5),(9,'豬布林','中立',16,5,'地獄',5),(10,'凋零骷髏','敵對',20,8,'地獄',5),(11,'終界龍','敵對',200,10,'終界',12000),(12,'凋零怪','敵對',300,8,'主世界',50),(13,'鐵魔像','中立',100,21,'主世界',0),(14,'狼','中立',8,4,'主世界',2),(15,'牛','友善',10,NULL,'主世界',2),(16,'豬','友善',10,NULL,'主世界',2),(17,'羊','友善',8,NULL,'主世界',2),(18,'雞','友善',4,NULL,'主世界',2),(19,'村民','友善',20,NULL,'主世界',0),(20,'界伏蚌','敵對',30,4,'終界',5);",
+"CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, category TEXT, max_stack INTEGER, durability INTEGER);",
+"INSERT INTO items VALUES (1,'鑽石','材料',64,NULL),(2,'鐵錠','材料',64,NULL),(3,'金錠','材料',64,NULL),(4,'綠寶石','材料',64,NULL),(5,'紅石粉','材料',64,NULL),(6,'煤炭','材料',64,NULL),(7,'鑽石劍','武器',1,1561),(8,'鐵劍','武器',1,250),(9,'弓','武器',1,384),(10,'鑽石鎬','工具',1,1561),(11,'鐵鎬','工具',1,250),(12,'石鎬','工具',1,131),(13,'麵包','食物',64,NULL),(14,'熟牛排','食物',64,NULL),(15,'金蘋果','食物',64,NULL),(16,'終界珍珠','材料',16,NULL),(17,'鞘翅','裝備',1,432),(18,'鑽石胸甲','裝備',1,528),(19,'盾牌','裝備',1,336),(20,'火藥','材料',64,NULL),(21,'骨頭','材料',64,NULL),(22,'腐肉','食物',64,NULL),(23,'烈焰桿','材料',64,NULL);",
+"CREATE TABLE mob_drops (mob_id INTEGER, item_id INTEGER);",
+"INSERT INTO mob_drops VALUES (1,22),(2,21),(2,9),(3,20),(5,16),(6,5),(7,23),(8,20),(10,6),(10,21),(13,2);",
+"CREATE TABLE players (id INTEGER PRIMARY KEY, name TEXT, level INTEGER, biome_id INTEGER, guild TEXT, joined_date TEXT);",
+"INSERT INTO players VALUES (1,'小麥',32,1,'麥田公會','2025-01-05'),(2,'阿石',18,2,'麥田公會','2025-01-18'),(3,'紅石老張',45,3,'紅石工坊','2025-02-02'),(4,'夜貓',27,2,NULL,'2025-02-14'),(5,'鑽石阿明',51,4,'紅石工坊','2025-03-01'),(6,'小羊',9,1,'麥田公會','2025-03-20'),(7,'探險家莉莉',38,5,'遠征隊','2025-04-08'),(8,'冰塊',14,6,NULL,'2025-04-25'),(9,'烈焰阿傑',42,8,'遠征隊','2025-05-11'),(10,'末影小安',60,10,'遠征隊','2025-06-03'),(11,'沼澤阿寶',22,7,NULL,'2025-06-21'),(12,'新手小白',3,1,NULL,'2025-07-09');",
+"CREATE TABLE inventory (player_id INTEGER, item_id INTEGER, quantity INTEGER);",
+"INSERT INTO inventory VALUES (1,13,32),(1,11,1),(1,2,20),(2,12,1),(2,6,45),(3,5,128),(3,11,1),(3,3,12),(4,9,1),(4,21,16),(5,1,37),(5,10,1),(5,7,1),(6,13,8),(7,4,24),(7,14,30),(7,19,1),(8,8,1),(9,23,14),(9,3,40),(9,15,3),(10,16,16),(10,17,1),(10,18,1),(10,1,22),(11,22,9),(12,13,2);",
+"CREATE TABLE mining_log (id INTEGER PRIMARY KEY, player_id INTEGER, ore TEXT, quantity INTEGER, mined_on TEXT);",
+"INSERT INTO mining_log VALUES (1,1,'煤礦',24,'2025-08-01'),(2,3,'紅石礦',40,'2025-08-01'),(3,5,'鑽石礦',6,'2025-08-02'),(4,1,'鐵礦',12,'2025-08-03'),(5,2,'煤礦',18,'2025-08-03'),(6,10,'鑽石礦',9,'2025-08-04'),(7,3,'紅石礦',35,'2025-08-05'),(8,5,'鑽石礦',4,'2025-08-05'),(9,7,'綠寶石礦',3,'2025-08-06'),(10,9,'金礦',22,'2025-08-06'),(11,1,'鐵礦',15,'2025-08-07'),(12,5,'鐵礦',30,'2025-08-08'),(13,10,'鑽石礦',11,'2025-08-08'),(14,2,'鐵礦',8,'2025-08-09'),(15,3,'金礦',14,'2025-08-10'),(16,9,'金礦',27,'2025-08-10'),(17,7,'鐵礦',16,'2025-08-11'),(18,5,'鑽石礦',7,'2025-08-12'),(19,10,'紅石礦',33,'2025-08-12'),(20,1,'鑽石礦',2,'2025-08-13'),(21,3,'紅石礦',28,'2025-08-14'),(22,9,'煤礦',20,'2025-08-14');"
+].join("\n");
+
+var TABLES = [
+  { name: "mobs", zh: "生物", cols: [["id","編號"],["name","名稱"],["type","類型：敵對、中立、友善"],["health","血量（2 點 = 1 顆心）"],["damage","攻擊力，不會攻擊的是 NULL"],["dimension","出沒的維度"],["xp","擊敗後掉落的經驗值"]] },
+  { name: "items", zh: "物品", cols: [["id","編號"],["name","名稱"],["category","分類：材料、武器、工具、食物、裝備"],["max_stack","一格最多疊幾個"],["durability","耐久度，不會損壞的是 NULL"]] },
+  { name: "players", zh: "玩家", cols: [["id","編號"],["name","暱稱"],["level","等級"],["biome_id","基地所在的生態域編號"],["guild","公會，沒加入的是 NULL"],["joined_date","加入伺服器的日期"]] },
+  { name: "biomes", zh: "生態域", cols: [["id","編號"],["name","名稱"],["dimension","所屬維度"],["temperature","溫度值"]] },
+  { name: "inventory", zh: "玩家背包", cols: [["player_id","玩家編號"],["item_id","物品編號"],["quantity","數量"]] },
+  { name: "mob_drops", zh: "生物掉落物", cols: [["mob_id","生物編號"],["item_id","物品編號"]] },
+  { name: "mining_log", zh: "挖礦紀錄", cols: [["id","編號"],["player_id","玩家編號"],["ore","礦石種類"],["quantity","挖到的數量"],["mined_on","挖礦日期"]] }
+];
+
+var CHAPTERS = [
+  { name: "木鎬 · 基礎查詢", from: 1, to: 4 },
+  { name: "石鎬 · 條件篩選", from: 5, to: 9 },
+  { name: "鐵鎬 · 整理結果", from: 10, to: 15 },
+  { name: "金鎬 · 統計分組", from: 16, to: 19 },
+  { name: "鑽石鎬 · 多表查詢", from: 20, to: 25 },
+  { name: "獄髓鎬 · 視窗函數", from: 26, to: 30 }
+];
+
+var LEVELS = [
+{ t: "打開生物圖鑑", kw: [["select","選取"],["from","從哪張表"]], tables: ["mobs"],
+  story: "你剛進入伺服器，手上只有一把木鎬。先翻開生物圖鑑，看看這個世界有哪些生物。",
+  teach: "<p>查資料的基本句型是「選什麼欄位、從哪張表」。星號 <code>*</code> 代表全部欄位。</p><pre>SELECT * FROM items;</pre><p>這句會列出物品表的每一欄、每一列。SQL 關鍵字大小寫都可以。</p>",
+  task: "查出生物表 <code>mobs</code> 的全部資料。", hint: "把範例裡的 items 換成 mobs。", ans: "SELECT * FROM mobs;" },
+{ t: "只看需要的欄位", kw: [["column","欄位"]], tables: ["mobs"],
+  story: "圖鑑欄位太多了。出門打怪前，你只想知道每種生物叫什麼、有多少血。",
+  teach: "<p>把 <code>*</code> 換成欄位名稱，用逗號隔開，就只會顯示那幾欄。</p><pre>SELECT name, category FROM items;</pre>",
+  task: "查出每種生物的名稱 <code>name</code> 和血量 <code>health</code>。", hint: "SELECT 後面寫 name, health。", ans: "SELECT name, health FROM mobs;" },
+{ t: "幫欄位取中文名字", kw: [["as","當作"],["alias","別名"]], tables: ["mobs"],
+  story: "隊友看不懂英文欄位。你決定把結果的標題換成中文再貼到公告欄。",
+  teach: "<p>在欄位後面加 <code>AS 新名字</code>，結果的標題就會換掉。資料表本身不會被改。</p><pre>SELECT name AS 物品, max_stack AS 堆疊上限 FROM items;</pre>",
+  task: "查出生物的 <code>name</code> 和 <code>health</code>，標題分別改成 <code>名稱</code> 和 <code>血量</code>。", hint: "name AS 名稱, health AS 血量", ans: "SELECT name AS 名稱, health AS 血量 FROM mobs;" },
+{ t: "血量換算成愛心", kw: [["value","值"],["calculate","計算"]], tables: ["mobs"],
+  story: "遊戲畫面上的血條是一顆一顆的愛心，每顆愛心等於 2 點血量。",
+  teach: "<p>SELECT 裡可以直接做加減乘除，算出來的結果會變成新的一欄。記得用 AS 幫它取名字。</p><pre>SELECT name, max_stack * 27 AS chest_total FROM items;</pre><p>這句算出一個小箱子（27 格）最多能放幾個。</p>",
+  task: "查出生物的 <code>name</code>，以及血量除以 2 的愛心數，欄位取名 <code>hearts</code>。", hint: "health / 2 AS hearts", ans: "SELECT name, health / 2 AS hearts FROM mobs;" },
+{ t: "只找敵對生物", kw: [["where","條件"]], tables: ["mobs"],
+  story: "你升級成石鎬了。天快黑了，你想知道晚上哪些生物會主動攻擊你。",
+  teach: "<p><code>WHERE</code> 放在 FROM 後面，只留下符合條件的列。文字要用單引號包起來。</p><pre>SELECT name, max_stack FROM items WHERE category = '食物';</pre>",
+  task: "查出類型 <code>type</code> 是 <code>敵對</code> 的生物，顯示 <code>name</code> 和 <code>health</code>。", hint: "WHERE type = '敵對'", ans: "SELECT name, health FROM mobs WHERE type = '敵對';" },
+{ t: "血量在範圍內的生物", kw: [["between","在…之間"],["and","而且"]], tables: ["mobs"],
+  story: "你的鐵劍適合對付血量中等的對手。太弱的沒意思，太強的打不過。",
+  teach: "<p>比較大小可以用 <code>&gt;</code>、<code>&lt;</code>、<code>&gt;=</code>、<code>&lt;=</code>、<code>&lt;&gt;</code>（不等於）。要表示一段範圍，用 <code>BETWEEN 小 AND 大</code>，頭尾都包含。</p><pre>SELECT name, durability FROM items WHERE durability BETWEEN 200 AND 400;</pre>",
+  task: "查出血量在 20 到 40 之間（含 20 和 40）的生物，顯示 <code>name</code> 和 <code>health</code>。", hint: "WHERE health BETWEEN 20 AND 40", ans: "SELECT name, health FROM mobs WHERE health BETWEEN 20 AND 40;" },
+{ t: "不會攻擊的生物", kw: [["null","空值"],["is","是"]], tables: ["mobs"],
+  story: "牧場需要動物。你要找出攻擊力那一格是空白的生物，牠們不會還手。",
+  teach: "<p>空白的格子叫 <code>NULL</code>，意思是「沒有值」。它不能用等號比，要寫 <code>IS NULL</code> 或 <code>IS NOT NULL</code>。</p><pre>SELECT name FROM items WHERE durability IS NOT NULL;</pre><p>這句找出有耐久度的物品。</p>",
+  task: "查出攻擊力 <code>damage</code> 是空值的生物，顯示 <code>name</code> 和 <code>type</code>。", hint: "WHERE damage IS NULL", ans: "SELECT name, type FROM mobs WHERE damage IS NULL;" },
+{ t: "名字裡有鑽石的物品", kw: [["like","像（模糊比對）"]], tables: ["items"],
+  story: "你終於挖到鑽石，想查查它能做成哪些東西。",
+  teach: "<p><code>LIKE</code> 用來比對文字的一部分。<code>%</code> 代表任意長度的任何字。</p><pre>SELECT name FROM mobs WHERE name LIKE '%骷髏';</pre><p>這句找出名字以「骷髏」結尾的生物。<code>'%骷髏%'</code> 則是名字裡任何位置有「骷髏」。</p>",
+  task: "查出名稱裡含有「鑽石」的物品，顯示 <code>name</code> 和 <code>category</code>。", hint: "WHERE name LIKE '%鑽石%'", ans: "SELECT name, category FROM items WHERE name LIKE '%鑽石%';" },
+{ t: "危險名單", kw: [["and","而且"],["or","或者"],["not","不是"]], tables: ["mobs"],
+  story: "遠征隊要一份危險名單：地獄裡的敵對生物，再加上所有血量破百的大傢伙。",
+  teach: "<p>多個條件用 <code>AND</code>（都要成立）或 <code>OR</code>（一個成立就好）串起來。混用時加括號，才不會算錯順序。</p><pre>SELECT name FROM items\nWHERE (category = '武器' AND durability > 300) OR max_stack = 16;</pre>",
+  task: "查出「維度是 <code>地獄</code> 而且類型是 <code>敵對</code>」或者「血量大於等於 100」的生物，顯示 <code>name</code>、<code>dimension</code>、<code>health</code>。", hint: "WHERE (dimension = '地獄' AND type = '敵對') OR health >= 100", ans: "SELECT name, dimension, health FROM mobs WHERE (dimension = '地獄' AND type = '敵對') OR health >= 100;" },
+{ t: "有哪些組合", kw: [["distinct","不重複"]], tables: ["mobs"],
+  story: "鐵鎬到手。你想整理一張總表：每個維度各有哪幾種類型的生物，重複的只列一次。",
+  teach: "<p><code>DISTINCT</code> 寫在 SELECT 後面，會把重複的列合成一列。寫兩個欄位時，是看兩欄的組合有沒有重複。</p><pre>SELECT DISTINCT category FROM items;</pre>",
+  task: "查出生物表裡不重複的 <code>dimension</code> 和 <code>type</code> 組合。", hint: "SELECT DISTINCT dimension, type", ans: "SELECT DISTINCT dimension, type FROM mobs;" },
+{ t: "血量排行榜", kw: [["order by","依…排序"],["asc","由小到大"],["desc","由大到小"]], tables: ["mobs"], ordered: true,
+  story: "公會要貼一張生物血量排行榜，最硬的排最上面。",
+  teach: "<p><code>ORDER BY</code> 放在句子最後面，決定列的順序。預設由小到大（ASC），加 <code>DESC</code> 變成由大到小。可以寫多個欄位，前面的相同時才比後面的。</p><pre>SELECT name, durability FROM items\nWHERE durability IS NOT NULL\nORDER BY durability DESC, id ASC;</pre>",
+  task: "查出生物的 <code>id</code>、<code>name</code>、<code>health</code>，依血量由高到低排；血量相同時 <code>id</code> 小的在前。", hint: "ORDER BY health DESC, id ASC", ans: "SELECT id, name, health FROM mobs ORDER BY health DESC, id ASC;" },
+{ t: "等級前三名", kw: [["limit","限制筆數"],["offset","跳過幾筆"]], tables: ["players"], ordered: true,
+  story: "伺服器要頒獎給等級最高的三位玩家。",
+  teach: "<p><code>LIMIT 數字</code> 只取前幾列，通常和 ORDER BY 一起用。<code>LIMIT 3 OFFSET 2</code> 是跳過前 2 列再取 3 列。</p><pre>SELECT name, durability FROM items\nORDER BY durability DESC\nLIMIT 2;</pre>",
+  task: "查出等級最高的 3 位玩家，顯示 <code>name</code> 和 <code>level</code>，等級高的在前。", hint: "ORDER BY level DESC LIMIT 3", ans: "SELECT name, level FROM players ORDER BY level DESC LIMIT 3;" },
+{ t: "幫生物分級", kw: [["case","情況"],["when","當…"],["then","就…"],["else","否則"]], tables: ["mobs"],
+  story: "新手看數字沒感覺。你決定把生物分成三級，一眼就知道好不好打。",
+  teach: "<p><code>CASE WHEN 條件 THEN 結果 … ELSE 結果 END</code> 會依條件給出不同的值，從上往下比，先符合的先算。</p><pre>SELECT name,\n  CASE WHEN max_stack = 1 THEN '不能疊'\n       WHEN max_stack = 16 THEN '疊 16'\n       ELSE '疊 64' END AS stack_type\nFROM items;</pre>",
+  task: "查出生物的 <code>name</code>、<code>health</code>，再加一欄 <code>tier</code>：血量 100 以上是 <code>首領級</code>，20 以上是 <code>普通</code>，其他是 <code>脆皮</code>。", hint: "CASE WHEN health >= 100 THEN '首領級' WHEN health >= 20 THEN '普通' ELSE '脆皮' END AS tier", ans: "SELECT name, health,\n  CASE WHEN health >= 100 THEN '首領級'\n       WHEN health >= 20 THEN '普通'\n       ELSE '脆皮' END AS tier\nFROM mobs;" },
+{ t: "哪個月加入的", kw: [["date","日期"],["function","函數"]], tables: ["players"],
+  story: "管理員想知道每位玩家是哪一個月加入伺服器的。",
+  teach: "<p>函數會把一個值加工成另一個值。<code>strftime('格式', 日期)</code> 可以從日期取出想要的部分：<code>%Y</code> 是年、<code>%m</code> 是月、<code>%d</code> 是日。</p><pre>SELECT mined_on, strftime('%d', mined_on) AS day FROM mining_log;</pre>",
+  task: "查出玩家的 <code>name</code>、<code>joined_date</code>，再加一欄 <code>join_month</code>，格式是年-月，例如 <code>2025-01</code>。", hint: "strftime('%Y-%m', joined_date) AS join_month", ans: "SELECT name, joined_date, strftime('%Y-%m', joined_date) AS join_month FROM players;" },
+{ t: "製作生物名牌", kw: [["length","長度"],["text","文字"]], tables: ["mobs"],
+  story: "你要幫動物園的每個圍欄做名牌，需要知道名字有幾個字，還要印上類型。",
+  teach: "<p><code>length(文字)</code> 算出字數。兩條直線 <code>||</code> 可以把文字接在一起。</p><pre>SELECT name, length(name) AS name_len, '【' || category || '】' AS tag FROM items;</pre>",
+  task: "查出生物的 <code>name</code>、名字字數 <code>name_len</code>，以及把類型後面接上「生物」兩個字的 <code>label</code>（例如 <code>敵對生物</code>）。", hint: "length(name) AS name_len, type || '生物' AS label", ans: "SELECT name, length(name) AS name_len, type || '生物' AS label FROM mobs;" },
+{ t: "敵對生物總覽", kw: [["count","計數"],["sum","加總"],["average (avg)","平均"],["max / min","最大 / 最小"]], tables: ["mobs"],
+  story: "金鎬時代。你不想再一列一列看，只想要幾個總結數字。",
+  teach: "<p>聚合函數把很多列算成一個數字：<code>COUNT(*)</code> 算列數、<code>SUM</code> 加總、<code>AVG</code> 平均、<code>MAX</code> 最大、<code>MIN</code> 最小。</p><pre>SELECT COUNT(*) AS total, MAX(durability) AS best FROM items WHERE category = '武器';</pre>",
+  task: "針對類型是 <code>敵對</code> 的生物，算出數量 <code>total</code>、最高血量 <code>max_health</code>、平均血量 <code>avg_health</code>。", hint: "SELECT COUNT(*) AS total, MAX(health) AS max_health, AVG(health) AS avg_health … WHERE type = '敵對'", ans: "SELECT COUNT(*) AS total, MAX(health) AS max_health, AVG(health) AS avg_health FROM mobs WHERE type = '敵對';" },
+{ t: "每種類型有幾隻", kw: [["group by","依…分組"]], tables: ["mobs"],
+  story: "圖鑑封面要印一行統計：敵對、中立、友善各有幾種生物。",
+  teach: "<p><code>GROUP BY 欄位</code> 會把那一欄相同的列分成一組，聚合函數就會每一組各算一次。</p><pre>SELECT category, COUNT(*) AS item_count FROM items GROUP BY category;</pre>",
+  task: "算出每種 <code>type</code> 各有幾種生物，數量欄位取名 <code>mob_count</code>。", hint: "SELECT type, COUNT(*) AS mob_count FROM mobs GROUP BY type", ans: "SELECT type, COUNT(*) AS mob_count FROM mobs GROUP BY type;" },
+{ t: "維度加類型一起分", kw: [["group","分組"]], tables: ["mobs"],
+  story: "遠征隊想看得更細：每個維度裡，每種類型有幾種生物，其中最硬的血量是多少。",
+  teach: "<p>GROUP BY 後面可以寫多個欄位，兩欄都相同的列才會被分在同一組。</p><pre>SELECT category, max_stack, COUNT(*) AS item_count\nFROM items\nGROUP BY category, max_stack;</pre>",
+  task: "依 <code>dimension</code> 和 <code>type</code> 分組，算出數量 <code>mob_count</code> 和最高血量 <code>max_health</code>。", hint: "GROUP BY dimension, type", ans: "SELECT dimension, type, COUNT(*) AS mob_count, MAX(health) AS max_health FROM mobs GROUP BY dimension, type;" },
+{ t: "挖礦達人", kw: [["having","分組後的條件"]], tables: ["mining_log"],
+  story: "公會要發「挖礦達人」徽章給累計挖到 50 個以上礦石的玩家。",
+  teach: "<p>WHERE 是分組之前篩選每一列；<code>HAVING</code> 是分組之後篩選每一組，所以可以用聚合函數當條件。</p><pre>SELECT category, COUNT(*) AS item_count\nFROM items\nGROUP BY category\nHAVING COUNT(*) >= 4;</pre>",
+  task: "從挖礦紀錄算出每位玩家的總挖礦量 <code>total_mined</code>，只留下總量大於等於 50 的，顯示 <code>player_id</code> 和 <code>total_mined</code>。", hint: "GROUP BY player_id HAVING SUM(quantity) >= 50", ans: "SELECT player_id, SUM(quantity) AS total_mined FROM mining_log GROUP BY player_id HAVING SUM(quantity) >= 50;" },
+{ t: "首領挑戰表", kw: [["cross join","交叉連接"]], tables: ["players", "mobs"],
+  story: "鑽石鎬到手，可以開始把不同的表接在一起。遠征隊的每位成員都要挑戰每一隻首領，請排出所有對戰組合。",
+  teach: "<p><code>CROSS JOIN</code> 把左表的每一列和右表的每一列都配一次。兩張表有同名欄位時，在前面加表名或簡稱來區分，例如 <code>p.name</code>。</p><pre>SELECT b.name AS biome, i.name AS tool\nFROM biomes b CROSS JOIN items i\nWHERE b.dimension = '地獄' AND i.category = '工具';</pre>",
+  task: "列出公會是 <code>遠征隊</code> 的玩家和血量大於等於 200 的生物的所有組合，顯示玩家名稱 <code>player</code> 和生物名稱 <code>boss</code>。", hint: "FROM players p CROSS JOIN mobs m WHERE p.guild = '遠征隊' AND m.health >= 200", ans: "SELECT p.name AS player, m.name AS boss FROM players p CROSS JOIN mobs m WHERE p.guild = '遠征隊' AND m.health >= 200;" },
+{ t: "玩家住在哪裡", kw: [["inner join","內連接"],["on","對應條件"]], tables: ["players", "biomes"],
+  story: "玩家表只記了基地的生態域編號。你想直接看到生態域的名字。",
+  teach: "<p><code>JOIN … ON</code> 依照對應條件把兩張表的列接起來，只留下兩邊對得上的列。</p><pre>SELECT m.name AS mob, i.name AS item\nFROM mob_drops d\nJOIN mobs m ON d.mob_id = m.id\nJOIN items i ON d.item_id = i.id;</pre><p>這句把掉落物表的編號換成生物和物品的名字。</p>",
+  task: "查出每位玩家的名稱 <code>player</code>、基地生態域名稱 <code>biome</code>，以及該生態域的 <code>dimension</code>。", hint: "FROM players p JOIN biomes b ON p.biome_id = b.id", ans: "SELECT p.name AS player, b.name AS biome, b.dimension FROM players p JOIN biomes b ON p.biome_id = b.id;" },
+{ t: "沒人住的生態域", kw: [["left join","左外連接"],["outer","外部"]], tables: ["biomes", "players"],
+  story: "管理員想看每個生態域住了誰，沒人住的也要列出來，方便招募新居民。",
+  teach: "<p><code>LEFT JOIN</code> 會保留左表的每一列。右表對不上的地方，欄位會是 NULL。</p><pre>SELECT m.name AS mob, d.item_id\nFROM mobs m LEFT JOIN mob_drops d ON d.mob_id = m.id;</pre><p>沒有掉落物紀錄的生物也會出現，item_id 是 NULL。</p>",
+  task: "列出每個生態域的名稱 <code>biome</code> 和住在那裡的玩家名稱 <code>player</code>。沒人住的生態域也要出現，<code>player</code> 是空值。", hint: "FROM biomes b LEFT JOIN players p ON p.biome_id = b.id", ans: "SELECT b.name AS biome, p.name AS player FROM biomes b LEFT JOIN players p ON p.biome_id = b.id;" },
+{ t: "比平均還硬的生物", kw: [["subquery","子查詢"]], tables: ["mobs"],
+  story: "你想知道哪些生物的血量高過全體平均，但你不知道平均是多少。",
+  teach: "<p>括號裡可以再放一句查詢，叫子查詢。它先算出結果，外面那句再拿來用。</p><pre>SELECT name, durability FROM items\nWHERE durability > (SELECT AVG(durability) FROM items);</pre>",
+  task: "查出血量高於全部生物平均血量的生物，顯示 <code>name</code> 和 <code>health</code>。", hint: "WHERE health > (SELECT AVG(health) FROM mobs)", ans: "SELECT name, health FROM mobs WHERE health > (SELECT AVG(health) FROM mobs);" },
+{ t: "從沒挖過礦的玩家", kw: [["exists","存在"]], tables: ["players", "mining_log"],
+  story: "公會想送一把石鎬給從來沒挖過礦的玩家，鼓勵他們下礦坑。",
+  teach: "<p><code>EXISTS (子查詢)</code> 檢查子查詢有沒有查到東西。<code>NOT EXISTS</code> 則是查不到才成立。子查詢裡可以用到外面那張表的欄位。</p><pre>SELECT name FROM mobs m\nWHERE EXISTS (SELECT 1 FROM mob_drops d WHERE d.mob_id = m.id);</pre><p>這句找出有掉落物紀錄的生物。</p>",
+  task: "查出在挖礦紀錄裡一筆都沒有的玩家，顯示 <code>name</code> 和 <code>level</code>。", hint: "WHERE NOT EXISTS (SELECT 1 FROM mining_log m WHERE m.player_id = p.id)", ans: "SELECT name, level FROM players p WHERE NOT EXISTS (SELECT 1 FROM mining_log m WHERE m.player_id = p.id);" },
+{ t: "終界遠征手冊", kw: [["union","合併結果"],["union all","合併且保留重複"]], tables: ["mobs", "items"],
+  story: "出發去終界之前，你要把「會遇到的生物」和「要帶的裝備」整理成同一張清單。",
+  teach: "<p><code>UNION ALL</code> 把兩句查詢的結果上下接在一起，兩邊的欄位數量要一樣。<code>UNION</code> 會順便去掉重複的列。</p><pre>SELECT name, '玩家' AS kind FROM players WHERE level >= 50\nUNION ALL\nSELECT name, '生態域' FROM biomes WHERE dimension = '地獄';</pre>",
+  task: "把維度是 <code>終界</code> 的生物（<code>kind</code> 填 <code>生物</code>）和分類是 <code>裝備</code> 的物品（<code>kind</code> 填 <code>物品</code>）合成一張表，欄位是 <code>name</code> 和 <code>kind</code>。", hint: "SELECT name, '生物' AS kind FROM mobs WHERE … UNION ALL SELECT name, '物品' FROM items WHERE …", ans: "SELECT name, '生物' AS kind FROM mobs WHERE dimension = '終界'\nUNION ALL\nSELECT name, '物品' FROM items WHERE category = '裝備';" },
+{ t: "各維度的血量總和", kw: [["over","在…範圍內"],["partition by","依…分區"],["window","視窗（開窗）"]], tables: ["mobs"],
+  story: "最後一把鎬：獄髓鎬。你想在每隻生物旁邊，同時看到牠所在維度的血量總和。",
+  teach: "<p>GROUP BY 會把很多列縮成一列。視窗函數不會：它保留每一列，再多加一欄統計。寫法是 <code>聚合函數 OVER (PARTITION BY 分區欄位)</code>。</p><pre>SELECT name, category, durability,\n  MAX(durability) OVER (PARTITION BY category) AS best_in_category\nFROM items;</pre>",
+  task: "查出生物的 <code>name</code>、<code>dimension</code>、<code>health</code>，再加一欄 <code>dim_total</code>：同一個維度所有生物的血量總和。", hint: "SUM(health) OVER (PARTITION BY dimension) AS dim_total", ans: "SELECT name, dimension, health, SUM(health) OVER (PARTITION BY dimension) AS dim_total FROM mobs;" },
+{ t: "累計挖礦量", kw: [["running total","累計"]], tables: ["mining_log"],
+  story: "每位玩家想看自己的挖礦量一天一天累積起來的樣子。",
+  teach: "<p>在 OVER 裡加上 <code>ORDER BY</code>，統計就會變成「從第一列累計到目前這一列」。</p><pre>SELECT name, joined_date,\n  COUNT(*) OVER (ORDER BY joined_date) AS member_no\nFROM players;</pre><p>這句算出每位玩家是第幾個加入的。</p>",
+  task: "從挖礦紀錄查出 <code>player_id</code>、<code>mined_on</code>、<code>quantity</code>，再加一欄 <code>running_total</code>：同一位玩家依日期累計的挖礦量。", hint: "SUM(quantity) OVER (PARTITION BY player_id ORDER BY mined_on) AS running_total", ans: "SELECT player_id, mined_on, quantity, SUM(quantity) OVER (PARTITION BY player_id ORDER BY mined_on) AS running_total FROM mining_log;" },
+{ t: "維度內的血量名次", kw: [["rank","排名"]], tables: ["mobs"],
+  story: "每個維度都要選出自己的血量排行。血量一樣的生物要並列同一名。",
+  teach: "<p><code>RANK() OVER (PARTITION BY … ORDER BY …)</code> 在每個分區裡排名次。數值相同會並列，下一名會跳號，例如 1、2、2、4。</p><pre>SELECT name, category, durability,\n  RANK() OVER (PARTITION BY category ORDER BY durability DESC) AS dur_rank\nFROM items WHERE durability IS NOT NULL;</pre>",
+  task: "查出生物的 <code>name</code>、<code>dimension</code>、<code>health</code>，再加一欄 <code>health_rank</code>：在同一個維度裡依血量由高到低的名次。", hint: "RANK() OVER (PARTITION BY dimension ORDER BY health DESC) AS health_rank", ans: "SELECT name, dimension, health, RANK() OVER (PARTITION BY dimension ORDER BY health DESC) AS health_rank FROM mobs;" },
+{ t: "公會內的座號", kw: [["row number","列號"]], tables: ["players"],
+  story: "每個公會要依等級幫成員編座號，等級最高的是 1 號。",
+  teach: "<p><code>ROW_NUMBER()</code> 和 RANK 很像，但它不會並列，每一列都拿到不同的號碼：1、2、3、4。</p><pre>SELECT ore, mined_on, quantity,\n  ROW_NUMBER() OVER (PARTITION BY ore ORDER BY quantity DESC) AS rn\nFROM mining_log;</pre>",
+  task: "針對有加入公會的玩家（<code>guild</code> 不是空值），查出 <code>name</code>、<code>guild</code>、<code>level</code>，再加一欄 <code>seat_no</code>：在公會內依等級由高到低的編號。", hint: "ROW_NUMBER() OVER (PARTITION BY guild ORDER BY level DESC) AS seat_no … WHERE guild IS NOT NULL", ans: "SELECT name, guild, level, ROW_NUMBER() OVER (PARTITION BY guild ORDER BY level DESC) AS seat_no FROM players WHERE guild IS NOT NULL;" },
+{ t: "和上一次比一比", kw: [["lag","往前看一列"],["lead","往後看一列"]], tables: ["mining_log"],
+  story: "畢業關卡。玩家想知道這次挖的量和自己上一次比起來是多還是少。",
+  teach: "<p><code>LAG(欄位)</code> 取同一分區裡上一列的值，<code>LEAD(欄位)</code> 取下一列的值。沒有上一列或下一列時是 NULL。</p><pre>SELECT name, joined_date,\n  LEAD(name) OVER (ORDER BY joined_date) AS next_member\nFROM players;</pre>",
+  task: "從挖礦紀錄查出 <code>player_id</code>、<code>mined_on</code>、<code>quantity</code>，再加一欄 <code>prev_quantity</code>：同一位玩家依日期排序的上一次挖礦量。", hint: "LAG(quantity) OVER (PARTITION BY player_id ORDER BY mined_on) AS prev_quantity", ans: "SELECT player_id, mined_on, quantity, LAG(quantity) OVER (PARTITION BY player_id ORDER BY mined_on) AS prev_quantity FROM mining_log;" }
+];
+
+var KEY = "minerSql.v1";
+var state = { done: {}, drafts: {}, cur: 0 };
+try { var raw = localStorage.getItem(KEY); if (raw) { var s = JSON.parse(raw); state.done = s.done || {}; state.drafts = s.drafts || {}; state.cur = typeof s.cur === "number" ? s.cur : 0; } } catch (e) {}
+if (state.cur < -1 || state.cur >= LEVELS.length) state.cur = 0;
+function persist() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+
+var SQL = null, expectedCache = {};
+function $(id) { return document.getElementById(id); }
+function mk(tag, cls, text) { var x = document.createElement(tag); if (cls) x.className = cls; if (text !== undefined) x.textContent = text; return x; }
+
+function runSql(sql) {
+  var db = new SQL.Database();
+  try {
+    db.run(SEED);
+    var out = db.exec(sql);
+    return out.length ? out[out.length - 1] : null;
+  } finally { db.close(); }
+}
+function zhError(msg) {
+  var m;
+  if ((m = /no such table: (.+)/.exec(msg))) return "找不到資料表「" + m[1] + "」。檢查表名有沒有拼錯，可以對照下方的資料表圖鑑。";
+  if ((m = /no such column: (.+)/.exec(msg))) return "找不到欄位「" + m[1] + "」。檢查欄位名稱，文字記得用單引號包起來。";
+  if ((m = /near "(.+?)": syntax error/.exec(msg))) return "語法有問題，出錯的位置在「" + m[1] + "」附近。檢查前面是不是少了逗號、關鍵字或括號。";
+  if (/incomplete input/.test(msg)) return "這句 SQL 還沒寫完，可能少了右括號或後半段。";
+  if ((m = /no such function: (.+)/.exec(msg))) return "沒有「" + m[1] + "」這個函數，檢查拼字。";
+  if (/ambiguous column name: (.+)/.test(msg)) return "欄位「" + /ambiguous column name: (.+)/.exec(msg)[1] + "」在兩張表都有，請在前面加上表名，例如 p.name。";
+  if (/SELECTs to the left and right of UNION/.test(msg)) return "UNION 上下兩句查詢的欄位數量不一樣。";
+  if (/misuse of aggregate/.test(msg)) return "聚合函數用錯位置了。分組後的條件要寫在 HAVING，不是 WHERE。";
+  return "SQL 執行失敗。";
+}
+function norm(v) { return typeof v === "number" ? Math.round(v * 10000) / 10000 : v; }
+function rowKey(r) { return JSON.stringify(r.map(norm)); }
+function compare(user, exp, ordered) {
+  if (!user) return "這句 SQL 沒有回傳任何資料表。查詢要用 SELECT 開頭。";
+  if (user.columns.length !== exp.columns.length) return "欄位數量不對：你的結果有 " + user.columns.length + " 欄，預期是 " + exp.columns.length + " 欄。";
+  for (var i = 0; i < exp.columns.length; i++) {
+    if (user.columns[i].toLowerCase() !== exp.columns[i].toLowerCase()) return "第 " + (i + 1) + " 欄的名稱是「" + user.columns[i] + "」，預期是「" + exp.columns[i] + "」。可以用 AS 取名。";
+  }
+  if (user.values.length !== exp.values.length) return "列數不對：你的結果有 " + user.values.length + " 列，預期是 " + exp.values.length + " 列。檢查篩選條件。";
+  var a = user.values.map(rowKey), b = exp.values.map(rowKey);
+  var sa = a.slice().sort(), sb = b.slice().sort();
+  for (var j = 0; j < sa.length; j++) if (sa[j] !== sb[j]) return "欄位和列數都對了，但有些格子的內容和預期不同。對照下面兩張表找找看。";
+  if (ordered) for (var k = 0; k < a.length; k++) if (a[k] !== b[k]) return "內容都對了，但順序不對。從第 " + (k + 1) + " 列開始和預期不同，檢查 ORDER BY。";
+  return "";
+}
+function tableEl(res, cap) {
+  var box = mk("div", "scroll");
+  if (!res || !res.columns.length) { box.appendChild(mk("p", "empty", "沒有資料")); return box; }
+  var t = mk("table"), hr = mk("tr");
+  res.columns.forEach(function (c) { hr.appendChild(mk("th", "", c)); });
+  var th = mk("thead"); th.appendChild(hr); t.appendChild(th);
+  var tb = mk("tbody");
+  res.values.slice(0, cap || 200).forEach(function (r) {
+    var tr = mk("tr");
+    r.forEach(function (v) { tr.appendChild(v === null ? mk("td", "null", "NULL") : mk("td", "", String(norm(v)))); });
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb); box.appendChild(t);
+  if (!res.values.length) box.appendChild(mk("p", "empty", "查詢成功，但沒有任何一列符合。"));
+  return box;
+}
+function resBlock(title, res) {
+  var d = mk("div", "res"), h = mk("h3");
+  h.appendChild(mk("span", "", title));
+  h.appendChild(mk("span", "", res ? res.values.length + " 列" : ""));
+  d.appendChild(h); d.appendChild(tableEl(res));
+  return d;
+}
+function expected(i) {
+  if (!expectedCache[i]) expectedCache[i] = runSql(LEVELS[i].ans);
+  return expectedCache[i];
+}
+
+function setVerdict(kind, nodes) {
+  var v = $("verdict"); v.className = "verdict " + kind; v.textContent = "";
+  nodes.forEach(function (n) { v.appendChild(typeof n === "string" ? mk("span", "", n) : n); });
+}
+function doneCount() { var n = 0; LEVELS.forEach(function (_, i) { if (state.done[i + 1]) n++; }); return n; }
+
+function renderMap() {
+  var map = $("map"); map.textContent = "";
+  CHAPTERS.forEach(function (c) {
+    var box = mk("div", "chap"); box.appendChild(mk("span", "", c.name));
+    var row = mk("div");
+    for (var n = c.from; n <= c.to; n++) (function (n) {
+      var b = mk("button", "lv" + (state.done[n] ? " done" : "") + (state.cur === n - 1 ? " cur" : ""), String(n));
+      b.type = "button";
+      b.setAttribute("aria-label", "第 " + n + " 關 " + LEVELS[n - 1].t + (state.done[n] ? "（已過關）" : ""));
+      if (state.cur === n - 1) b.setAttribute("aria-current", "true");
+      b.addEventListener("click", function () { go(n - 1); });
+      row.appendChild(b);
+    })(n);
+    box.appendChild(row); map.appendChild(box);
+  });
+  var f = mk("button", "free" + (state.cur === -1 ? " cur" : ""), "自由練習"); f.type = "button";
+  f.addEventListener("click", function () { go(-1); });
+  map.appendChild(f);
+  var n = doneCount();
+  $("progText").textContent = "已過 " + n + " / " + LEVELS.length + " 關";
+  $("progBar").setAttribute("aria-valuenow", n);
+  $("progBar").firstElementChild.style.width = (n / LEVELS.length * 100) + "%";
+}
+function chapterOf(n) { for (var i = 0; i < CHAPTERS.length; i++) if (n >= CHAPTERS[i].from && n <= CHAPTERS[i].to) return CHAPTERS[i]; }
+function renderLesson() {
+  var el = $("lesson"); el.textContent = "";
+  var free = state.cur === -1;
+  $("hintBtn").hidden = free; $("ansBtn").hidden = free;
+  if (free) {
+    el.appendChild(mk("p", "eyebrow", "自由練習"));
+    el.appendChild(mk("h1", "", "自己出題，自己查"));
+    el.appendChild(mk("p", "story", "這裡不會判對錯。7 張資料表隨你查，適合拿來寫「自己出 10 題」的作業。"));
+    var t = mk("div", "teach");
+    t.innerHTML = "<p>出題靈感：</p><p>哪個公會的平均等級最高？<br>每種礦石總共被挖了多少？<br>背包裡有鑽石的玩家是誰、各有幾顆？<br>哪些生物會掉落材料類的物品？<br>八月每一天全伺服器挖了多少礦？</p><p>每次執行都會用全新的資料，所以就算寫了 UPDATE 或 DELETE 也不會弄壞資料表。</p>";
+    el.appendChild(t);
+    return;
+  }
+  var n = state.cur + 1, L = LEVELS[state.cur], c = chapterOf(n);
+  el.appendChild(mk("p", "eyebrow", "第 " + n + " 關　" + c.name));
+  el.appendChild(mk("h1", "", L.t));
+  el.appendChild(mk("p", "story", L.story));
+  var kw = mk("ul", "kw"); kw.setAttribute("aria-label", "本關英文關鍵字");
+  L.kw.forEach(function (k) { var li = mk("li"); li.appendChild(mk("b", "", k[0])); li.appendChild(document.createTextNode(k[1])); kw.appendChild(li); });
+  el.appendChild(kw);
+  var teach = mk("div", "teach"); teach.innerHTML = L.teach; el.appendChild(teach);
+  var task = mk("div", "task"); task.appendChild(mk("h2", "", "任務"));
+  var p = mk("p"); p.innerHTML = L.task; task.appendChild(p);
+  var uses = mk("p", "uses", "會用到的表：");
+  L.tables.forEach(function (name, i) {
+    if (i) uses.appendChild(document.createTextNode("、"));
+    var b = mk("button", "", name); b.type = "button";
+    b.addEventListener("click", function () { var d = $("tbl-" + name); d.open = true; fillPreview(d, name); d.scrollIntoView({ block: "center" }); });
+    uses.appendChild(b);
+  });
+  task.appendChild(uses);
+  el.appendChild(task);
+}
+function fillPreview(d, name) {
+  if (!SQL || d.dataset.filled) return;
+  d.dataset.filled = "1";
+  d.appendChild(tableEl(runSql("SELECT * FROM " + name)));
+}
+function renderTables() {
+  var root = $("tables"); root.textContent = "";
+  var used = state.cur >= 0 ? LEVELS[state.cur].tables : [];
+  TABLES.forEach(function (t) {
+    var d = mk("details", "tbl" + (used.indexOf(t.name) >= 0 ? " used" : "")); d.id = "tbl-" + t.name;
+    var s = mk("summary"); s.appendChild(mk("b", "", t.name)); s.appendChild(mk("span", "", t.zh + "　" + t.cols.length + " 欄"));
+    d.appendChild(s);
+    var ul = mk("div", "cols");
+    t.cols.forEach(function (c) { ul.appendChild(mk("b", "", c[0])); ul.appendChild(mk("span", "", c[1])); });
+    d.appendChild(ul);
+    d.addEventListener("toggle", function () { if (d.open) fillPreview(d, t.name); });
+    root.appendChild(d);
+  });
+}
+function go(i) {
+  state.drafts[state.cur] = $("sql").value;
+  state.cur = i; persist();
+  renderAll();
+  $("lesson").scrollIntoView({ block: "nearest" });
+}
+function renderAll() {
+  renderMap(); renderLesson(); renderTables();
+  $("sql").value = state.drafts[state.cur] || (state.cur === -1 ? "SELECT * FROM players;" : "");
+  $("sql").placeholder = state.cur === -1 ? "" : "SELECT …";
+  $("extra").textContent = ""; $("results").textContent = "";
+  if (state.cur === -1) setVerdict("info", ["自由練習不判對錯，按「執行」直接看結果。"]);
+  else if (state.done[state.cur + 1]) setVerdict("info", ["這一關已經過了。可以再練一次，或挑別的關卡。"]);
+  else setVerdict("info", ["寫好 SQL 後按「執行」，系統會把你的結果和預期結果比對。"]);
+  if (SQL && state.cur >= 0) $("results").appendChild(resBlock("預期結果", expected(state.cur)));
+}
+function run() {
+  if (!SQL) return;
+  var sql = $("sql").value.trim();
+  state.drafts[state.cur] = $("sql").value; persist();
+  var results = $("results"); results.textContent = "";
+  if (!sql) { setVerdict("no", ["還沒寫 SQL。先在上面的黑色區域輸入查詢。"]); if (state.cur >= 0) results.appendChild(resBlock("預期結果", expected(state.cur))); return; }
+  var user = null, err = null;
+  try { user = runSql(sql); } catch (e) { err = String(e && e.message || e); }
+  var free = state.cur === -1;
+  if (err) {
+    var box = mk("span"); box.appendChild(mk("b", "", zhError(err))); box.appendChild(mk("span", "mono", err));
+    setVerdict("no", [box]);
+    if (!free) results.appendChild(resBlock("預期結果", expected(state.cur)));
+    return;
+  }
+  if (free) {
+    setVerdict(user ? "ok" : "info", [user ? "查詢成功，共 " + user.values.length + " 列。" : "執行成功，這句 SQL 沒有回傳資料表。"]);
+    if (user) results.appendChild(resBlock("你的結果", user));
+    return;
+  }
+  var L = LEVELS[state.cur], exp = expected(state.cur), problem = compare(user, exp, L.ordered);
+  if (user) results.appendChild(resBlock("你的結果", user));
+  results.appendChild(resBlock("預期結果", exp));
+  if (problem) { setVerdict("no", [mk("b", "", "還沒過關。"), problem]); return; }
+  state.done[state.cur + 1] = 1; persist(); renderMap();
+  var msg = mk("span"); msg.appendChild(mk("b", "", "過關！"));
+  var last = state.cur === LEVELS.length - 1, all = doneCount() === LEVELS.length;
+  msg.appendChild(document.createTextNode(all ? " 30 關全部完成，獄髓鎬是你的了。接著到自由練習自己出 10 題。" : " 你的結果和預期完全一樣。"));
+  var nodes = [msg];
+  var nb = mk("button", "next", last || all ? "去自由練習" : "下一關"); nb.type = "button";
+  nb.addEventListener("click", function () { go(last || all ? -1 : state.cur + 1); $("sql").focus(); });
+  nodes.push(nb);
+  setVerdict("ok", nodes);
+}
+function note(title, html, pre) {
+  var ex = $("extra"); ex.textContent = "";
+  var n = mk("div", "note" + (pre ? " answer" : "")); n.appendChild(mk("h3", "", title));
+  if (pre) n.appendChild(mk("pre", "", html)); else n.appendChild(mk("p", "", html));
+  ex.appendChild(n);
+}
+
+$("runBtn").addEventListener("click", run);
+$("sql").addEventListener("keydown", function (e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); run(); }
+  if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && this.value.slice(0, this.selectionStart).split("\n").pop().trim() === "" && this.selectionStart === this.selectionEnd && this.value !== "") {
+    e.preventDefault(); var p = this.selectionStart; this.value = this.value.slice(0, p) + "  " + this.value.slice(p); this.selectionStart = this.selectionEnd = p + 2;
+  }
+});
+$("hintBtn").addEventListener("click", function () { if (state.cur >= 0) note("提示", LEVELS[state.cur].hint); });
+$("ansBtn").addEventListener("click", function () { if (state.cur >= 0) note("參考答案（先自己試過再看，寫法不只一種）", LEVELS[state.cur].ans, true); });
+$("clearBtn").addEventListener("click", function () { $("sql").value = ""; $("sql").focus(); });
+var armed = false, armTimer = null;
+$("resetBtn").addEventListener("click", function () {
+  var b = $("resetBtn");
+  if (!armed) { armed = true; b.textContent = "再按一次確認清除"; armTimer = setTimeout(function () { armed = false; b.textContent = "清除全部進度"; }, 4000); return; }
+  clearTimeout(armTimer); armed = false; b.textContent = "清除全部進度";
+  state = { done: {}, drafts: {}, cur: 0 }; persist(); $("sql").value = ""; renderAll();
+});
+
+renderAll();
+if (typeof initSqlJs === "function") {
+  initSqlJs().then(function (lib) {
+    SQL = lib;
+    $("runBtn").disabled = false; $("runBtn").textContent = "執行";
+    if (state.cur >= 0) { $("results").textContent = ""; $("results").appendChild(resBlock("預期結果", expected(state.cur))); }
+  }).catch(function () { setVerdict("no", ["SQL 引擎載入失敗。請重新整理頁面再試一次。"]); $("runBtn").textContent = "無法執行"; });
+} else {
+  setVerdict("no", ["SQL 引擎載入失敗。請檢查網路後重新整理頁面。"]); $("runBtn").textContent = "無法執行";
+}
+</script>
+</body>
+</html>

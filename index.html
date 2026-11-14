@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="用 Minecraft 的生物、物品與玩家資料闖 30 關，在瀏覽器裡直接寫 SQL。">
 <title>礦工 SQL 學院</title>
+<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=LXGW+WenKai+TC:wght@700&family=Noto+Sans+TC:wght@400;500;700&display=swap">
 <style>
 /* layout: a strip of 30 level blocks across the top (6 chapters = 6 pickaxe tiers); below it, lesson on the left, workbench (editor + results) on the right; table reference underneath */
@@ -186,7 +187,8 @@ td.null { color: var(--muted); font-family: var(--font-mono); font-size: 12px; }
   </section>
 
   <footer class="foot">
-    <span>非官方學習網站，與 Mojang、Microsoft 無關。闖關設計參考「SQL 之母」。玩家與挖礦紀錄是虛構的練習資料。進度存在這台裝置的瀏覽器裡。</span>
+    <span>非官方學習網站，與 Mojang、Microsoft 無關。闖關設計參考「SQL 之母」。玩家與挖礦紀錄是虛構的練習資料。</span>
+    <span id="saveState" role="status">進度存在這台裝置的瀏覽器裡。</span>
     <button type="button" id="resetBtn">清除全部進度</button>
   </footer>
 </main>
@@ -353,10 +355,73 @@ var LEVELS = [
 ];
 
 var KEY = "minerSql.v1";
-var state = { done: {}, drafts: {}, cur: 0 };
-try { var raw = localStorage.getItem(KEY); if (raw) { var s = JSON.parse(raw); state.done = s.done || {}; state.drafts = s.drafts || {}; state.cur = typeof s.cur === "number" ? s.cur : 0; } } catch (e) {}
+var state = { done: {}, drafts: {}, cur: 0, resetAt: 0 };
+try { var raw = localStorage.getItem(KEY); if (raw) { var s = JSON.parse(raw); state.done = s.done || {}; state.drafts = s.drafts || {}; state.cur = typeof s.cur === "number" ? s.cur : 0; state.resetAt = s.resetAt || 0; } } catch (e) {}
 if (state.cur < -1 || state.cur >= LEVELS.length) state.cur = 0;
 function persist() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+
+
+/* Progress sync. Local storage is always the working copy. A "remote" is any object with
+   save(data) -> Promise and subscribe(onData(dataOrNull, live), onError). Only the passed-level
+   map and the last reset time are synced. To add another backend (e.g. a Cloudflare Worker API),
+   write a function like claudeRemote() that resolves to such an object and try it in startSync(). */
+var LOCAL_NOTE = "進度存在這台裝置的瀏覽器裡。";
+var sync = { remote: null, writing: false, dirty: false, first: true };
+function setSync(t) { $("saveState").textContent = t; }
+function doneKey(d) { return Object.keys(d || {}).filter(function (k) { return d[k]; }).sort().join(","); }
+function pushRemote() {
+  if (!sync.remote) return;
+  if (sync.writing) { sync.dirty = true; return; }
+  sync.writing = true; sync.dirty = false; setSync("儲存中…");
+  sync.remote.save({ done: state.done, resetAt: state.resetAt || 0 }).then(
+    function () { setSync("進度已同步到雲端，換裝置登入也看得到。"); },
+    function () { setSync("這次沒存到雲端，進度先留在這台裝置。"); }
+  ).then(function () { sync.writing = false; if (sync.dirty) pushRemote(); });
+}
+function applyRemote(d) {
+  var first = sync.first; sync.first = false;
+  var rDone = (d && d.done) || {}, rReset = (d && d.resetAt) || 0, lReset = state.resetAt || 0, next;
+  if (!d || (first && lReset > rReset)) next = state.done;
+  else if (first && lReset === rReset) { next = {}; Object.keys(rDone).forEach(function (k) { if (rDone[k]) next[k] = 1; }); Object.keys(state.done).forEach(function (k) { if (state.done[k]) next[k] = 1; }); }
+  else { next = {}; Object.keys(rDone).forEach(function (k) { if (rDone[k]) next[k] = 1; }); state.resetAt = rReset; }
+  if (doneKey(next) !== doneKey(state.done)) { state.done = next; persist(); renderMap(); }
+  else persist();
+  if (doneKey(next) !== doneKey(rDone) || (state.resetAt || 0) !== rReset) { if (d || doneKey(next)) { pushRemote(); return; } }
+  setSync("進度已同步到雲端，換裝置登入也看得到。");
+}
+function claudeRemote() {
+  if (!window.claude || typeof window.claude.use !== "function") return Promise.resolve(null);
+  return Promise.all([window.claude.use("db"), window.claude.use("user")]).then(function (r) {
+    var db = r[0], user = r[1];
+    if (!db || !user) return null;
+    return user.id().then(function (uid) {
+      if (!uid) return null;
+      var doc = db.doc("data/users/" + uid + "/progress");
+      return {
+        save: function (data) { return doc.set(data); },
+        subscribe: function (onData, onError) {
+          doc.onSnapshot(function (snap) {
+            if (snap.metadata.hasPendingWrites) return;
+            onData(snap.exists ? JSON.parse(JSON.stringify(snap.data() || {})) : null, !snap.metadata.fromCache);
+          }, onError);
+        }
+      };
+    });
+  });
+}
+function startSync() {
+  claudeRemote().then(function (remote) {
+    if (!remote) { setSync(LOCAL_NOTE); return; }
+    sync.remote = remote; setSync("同步中…");
+    var timer = setTimeout(function () { setSync("還連不上雲端，先顯示這台裝置上的進度。"); }, 10000);
+    remote.subscribe(function (data, live) {
+      if (!live) return;
+      clearTimeout(timer);
+      if (sync.writing || sync.dirty) return;
+      applyRemote(data);
+    }, function () { clearTimeout(timer); sync.remote = null; setSync("目前連不上雲端，" + LOCAL_NOTE); });
+  }).catch(function () { setSync(LOCAL_NOTE); });
+}
 
 var SQL = null, expectedCache = {};
 function $(id) { return document.getElementById(id); }
@@ -547,7 +612,7 @@ function run() {
   if (user) results.appendChild(resBlock("你的結果", user));
   results.appendChild(resBlock("預期結果", exp));
   if (problem) { setVerdict("no", [mk("b", "", "還沒過關。"), problem]); return; }
-  state.done[state.cur + 1] = 1; persist(); renderMap();
+  state.done[state.cur + 1] = 1; persist(); pushRemote(); renderMap();
   var msg = mk("span"); msg.appendChild(mk("b", "", "過關！"));
   var last = state.cur === LEVELS.length - 1, all = doneCount() === LEVELS.length;
   msg.appendChild(document.createTextNode(all ? " 30 關全部完成，獄髓鎬是你的了。接著到自由練習自己出 10 題。" : " 你的結果和預期完全一樣。"));
@@ -579,10 +644,11 @@ $("resetBtn").addEventListener("click", function () {
   var b = $("resetBtn");
   if (!armed) { armed = true; b.textContent = "再按一次確認清除"; armTimer = setTimeout(function () { armed = false; b.textContent = "清除全部進度"; }, 4000); return; }
   clearTimeout(armTimer); armed = false; b.textContent = "清除全部進度";
-  state = { done: {}, drafts: {}, cur: 0 }; persist(); $("sql").value = ""; renderAll();
+  state = { done: {}, drafts: {}, cur: 0, resetAt: Date.now() }; persist(); pushRemote(); $("sql").value = ""; renderAll();
 });
 
 renderAll();
+startSync();
 if (typeof initSqlJs === "function") {
   initSqlJs().then(function (lib) {
     SQL = lib;
